@@ -83,12 +83,6 @@
      private static final String PAUSE_VPN = "de.blinkt.openvpn.PAUSE_VPN";
      private static final String RESUME_VPN = "de.blinkt.openvpn.RESUME_VPN";
  
-     public static final String EXTRA_CHALLENGE_TXT = "de.blinkt.openvpn.core.CR_TEXT_CHALLENGE";
-     public static final String EXTRA_CHALLENGE_OPENURL = "de.blinkt.openvpn.core.OPENURL_CHALLENGE";
- 
-     private static final int PRIORITY_MIN = -2;
-     private static final int PRIORITY_DEFAULT = 0;
-     private static final int PRIORITY_MAX = 2;
      private static Class<? extends Activity> mNotificationActivityClass;
      private final Vector<String> mDnslist = new Vector<>();
      private final NetworkSpace mRoutes = new NetworkSpace();
@@ -215,6 +209,26 @@
      }
  
      @Override
+     public boolean stopVPN(boolean replaceConnection) throws RemoteException {
+         if (getManagement() != null)
+             return getManagement().stopVPN(replaceConnection);
+         else
+             return false;
+     }
+ 
+     synchronized void unregisterDeviceStateReceiver() {
+         if (mDeviceStateReceiver != null) {
+             try {
+                 VpnStatus.removeByteCountListener(mDeviceStateReceiver);
+                 this.unregisterReceiver(mDeviceStateReceiver);
+             } catch (IllegalArgumentException ignored) {
+                 // Ignore exception if receiver is not registered
+             }
+         }
+         mDeviceStateReceiver = null;
+     }
+ 
+     @Override
      public IBinder asBinder() {
          return mBinder;
      }
@@ -238,7 +252,7 @@
                  this.unregisterReceiver(mDeviceStateReceiver);
              }
          } catch (IllegalArgumentException ignored) {
-             // I don't know why  this happens:
+             // I don't know why this happens:
              // java.lang.IllegalArgumentException: Receiver not registered: de.blinkt.openvpn.NetworkSateReceiver@41a61a10
              // Ignore for now ...
          }
@@ -250,13 +264,12 @@
      private String getTunConfigString() {
          // The format of the string is not important, only that
          // two identical configurations produce the same result
-         String cfg = "TUNCFG UNQIUE STRING ips:";
+         String cfg = "TUNCFG UNIQUE STRING ips:";
  
          if (mLocalIP != null)
              cfg += mLocalIP.toString();
          if (mLocalIPv6 != null)
              cfg += mLocalIPv6;
- 
  
          cfg += "routes: " + TextUtils.join("|", mRoutes.getNetworks(true)) + TextUtils.join("|", mRoutesv6.getNetworks(true));
          cfg += "excl. routes:" + TextUtils.join("|", mRoutes.getNetworks(false)) + TextUtils.join("|", mRoutesv6.getNetworks(false));
@@ -267,8 +280,6 @@
      }
  
      public ParcelFileDescriptor openTun() {
- 
-         //Debug.startMethodTracing(getExternalFilesDir(null).toString() + "/opentun.trace", 40* 1024 * 1024);
  
          Builder builder = new Builder();
  
@@ -307,7 +318,6 @@
  
          }
  
- 
          for (String dns : mDnslist) {
              try {
                  builder.addDnsServer(dns);
@@ -329,33 +339,10 @@
          Collection<IpAddress> positiveIPv4Routes = mRoutes.getPositiveIPList();
          Collection<IpAddress> positiveIPv6Routes = mRoutesv6.getPositiveIPList();
  
-         if ("samsung".equals(Build.BRAND) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && mDnslist.size() >= 1) {
-             // Check if the first DNS Server is in the VPN range
-             try {
-                 IpAddress dnsServer = new IpAddress(new CIDRIP(mDnslist.get(0), 32), true);
-                 boolean dnsIncluded = false;
-                 for (IpAddress net : positiveIPv4Routes) {
-                     if (net.containsNet(dnsServer)) {
-                         dnsIncluded = true;
-                     }
-                 }
-                 if (!dnsIncluded) {
-                     String samsungwarning = String.format("Warning Samsung Android 5.0+ devices ignore DNS servers outside the VPN range. To enable DNS resolution a route to your DNS Server (%s) has been added.", mDnslist.get(0));
-                     VpnStatus.logWarning(samsungwarning);
-                     positiveIPv4Routes.add(dnsServer);
-                 }
-             } catch (Exception e) {
-                 // If it looks like IPv6 ignore error
-                 if (!mDnslist.get(0).contains(":"))
-                     VpnStatus.logError("Error parsing DNS Server IP: " + mDnslist.get(0));
-             }
-         }
- 
          IpAddress multicastRange = new IpAddress(new CIDRIP("224.0.0.0", 3), true);
  
          for (IpAddress route : positiveIPv4Routes) {
              try {
- 
                  if (multicastRange.containsNet(route))
                      VpnStatus.logDebug(R.string.ignore_multicast_route, route.toString());
                  else
@@ -372,7 +359,6 @@
                  VpnStatus.logError(getString(R.string.route_rejected) + route6 + " " + ia.getLocalizedMessage());
              }
          }
- 
  
          if (mDomain != null)
              builder.addSearchDomain(mDomain);
@@ -416,7 +402,6 @@
              builder.setUnderlyingNetworks(null);
          }
  
- 
          String session = mProfile.mName;
          if (mLocalIP != null && mLocalIPv6 != null)
              session = getString(R.string.session_ipv6string, session, mLocalIP, mLocalIPv6);
@@ -444,7 +429,6 @@
          builder.setConfigureIntent(null);
  
          try {
-             //Debug.stopMethodTracing();
              ParcelFileDescriptor tun = builder.establish();
              if (tun == null)
                  throw new NullPointerException("Android establish() method returned null (Really broken network configuration?)");
@@ -457,7 +441,6 @@
              }
              return null;
          }
- 
      }
  
      private boolean isLockdownEnabledCompat() {
@@ -467,7 +450,6 @@
              /* We cannot determine this, return false */
              return false;
          }
- 
      }
  
      @TargetApi(Build.VERSION_CODES.LOLLIPOP)
@@ -486,7 +468,6 @@
  
              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT && !mProfile.mAllowLocalLAN) {
                  mRoutes.addIPSplit(new CIDRIP(ipAddr, netMask), true);
- 
              } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && mProfile.mAllowLocalLAN)
                  mRoutes.addIP(new CIDRIP(ipAddr, netMask), false);
          }
@@ -497,8 +478,6 @@
                  addRoutev6(net, false);
              }
          }
- 
- 
      }
  
      @TargetApi(Build.VERSION_CODES.LOLLIPOP)
@@ -595,7 +574,6 @@
                  (gateway.equals("255.255.255.255") || gateway.equals(mRemoteGW)))
              include = true;
  
- 
          if (route.len == 32 && !mask.equals("255.255.255.255")) {
              VpnStatus.logWarning(R.string.route_not_cidr, dest, mask);
          }
@@ -623,8 +601,6 @@
          } catch (UnknownHostException e) {
              VpnStatus.logException(e);
          }
- 
- 
      }
  
      private boolean isAndroidTunDevice(String device) {
@@ -673,14 +649,12 @@
              VpnStatus.logWarning(R.string.ip_looks_like_subnet, local, netmask, mode);
          }
  
- 
          /* Workaround for Lollipop, it  does not route traffic to the VPNs own network mask */
          if (mLocalIP.len <= 31 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
              CIDRIP interfaceRoute = new CIDRIP(mLocalIP.mIp, mLocalIP.len);
              interfaceRoute.normalise();
              addRoute(interfaceRoute, true);
          }
- 
  
          // Configurations are sometimes really broken...
          mRemoteGW = netmask;
@@ -699,14 +673,11 @@
          if (mProcessThread == null)
              return;
  
-         {
-             if (level == LEVEL_CONNECTED) {
-                 mDisplayBytecount = true;
-                 mConnecttime = System.currentTimeMillis();
-             } else {
-                 mDisplayBytecount = false;
-             }
- 
+         if (level == LEVEL_CONNECTED) {
+             mDisplayBytecount = true;
+             mConnecttime = System.currentTimeMillis();
+         } else {
+             mDisplayBytecount = false;
          }
      }
  
@@ -741,8 +712,8 @@
              byteIn = String.valueOf(in);
              byteOut = String.valueOf(out);
  
-             if(byteIn.isEmpty() ||byteIn.trim().length() == 0) byteIn = "0";
-             if(byteOut.isEmpty() || byteOut.trim().length() == 0) byteOut = "0";
+             if (byteIn.isEmpty() || byteIn.trim().length() == 0) byteIn = "0";
+             if (byteOut.isEmpty() || byteOut.trim().length() == 0) byteOut = "0";
  
              time = Calendar.getInstance().getTimeInMillis() - c;
              lastPacketReceive = Integer.parseInt(convertTwoDigit((int) (time / 1000) % 60)) - Integer.parseInt(seconds);
@@ -755,7 +726,6 @@
              lastPacketReceive = checkPacketReceive(lastPacketReceive);
              sendMessage(duration, String.valueOf(lastPacketReceive), byteIn, byteOut);
          }
- 
      }
  
      public int checkPacketReceive(int value) {
@@ -826,7 +796,7 @@
          VpnStatus.updateStateString("USER_INPUT", "waiting for user input", reason, LEVEL_WAITING_FOR_USER_INPUT, intent);
      }
  
-     //sending message to main activity
+     // Sending message to main activity
      private void sendMessage(String state) {
          Intent intent = new Intent("connectionState");
          intent.putExtra("state", state);
@@ -834,7 +804,7 @@
          LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
      }
  
-     //sending message to main activity
+     // Sending message to main activity
      private void sendMessage(String duration, String lastPacketReceive, String byteIn, String byteOut) {
          Intent intent = new Intent("connectionState");
          intent.putExtra("duration", duration);
@@ -851,7 +821,7 @@
          }
      }
  
-     public static String getStatus() {//it will be call from mainactivity for get current status
+     public static String getStatus() { // it will be called from main activity for getting current status
          return state;
      }
  
